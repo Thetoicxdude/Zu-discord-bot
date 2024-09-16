@@ -2415,7 +2415,6 @@ async def brew(ctx, potion_name: str, quantity: int):
 @bot.command()
 async def eat(ctx, food_name: str, quantity: int):
     player_id = str(ctx.author.id)
-    conn = sqlite3.connect('your_database.db')  # 替换为实际的数据库文件名
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
     try:
