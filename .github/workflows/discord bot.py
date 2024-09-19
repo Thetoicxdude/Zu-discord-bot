@@ -21,17 +21,14 @@ import logging
 import random
 
 #====================================================
-# Define intents
+
 intents = discord.Intents.all()
 bot = commands.Bot(intents=intents, command_prefix='!')
 
 
-
-# 配置 logger
 logging.basicConfig(filename='app.log', level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# 創建 logger 實例
 logger = logging.getLogger(__name__) 
 
 Database = "discord.db"
@@ -301,14 +298,14 @@ equipment_designs = {
 #=================================================================================================================
 
 
-# 配置 logger
+
 logging.basicConfig(filename='app.log', level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# 創建 logger 實例
+
 logger = logging.getLogger(__name__) 
 
-# 创建连接池和数据库管理类
+
 class DatabasePool:
     def __init__(self):
         self.conn = sqlite3.connect(Database, timeout=180)  # 设置超时时间为10秒
@@ -2570,11 +2567,11 @@ async def unequip(ctx, *, equipment: str):
         conn.close()
         return
     
-    # 更新玩家數值
+   
     cursor.execute("UPDATE player_info SET attack = attack - ?, defense = defense - ?, max_HP = max_HP - ?, max_MP = max_MP - ? WHERE user_id = ?",
                    (equipment_data[5], equipment_data[7], equipment_data[8], equipment_data[9], user_id))
 
-    # 將裝備放回背包
+    
     cursor.execute("UPDATE equip_bag SET equipped = 0 WHERE owner_id = ? AND item_name = ?", (user_id, equipment))
     cursor.execute("UPDATE bag SET quantity = quantity + 1 WHERE owner_id = ? AND item_name = ?", (user_id, equipment))
 
@@ -2592,11 +2589,11 @@ async def equipment(ctx):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
     try:
-        # 查詢玩家的裝備資料
+     
         cursor.execute(f"SELECT item_name, item_type, equipped FROM equip_bag WHERE owner_id = ?", (user_id,))
         equipped_equipment = cursor.fetchall()
 
-        # 格式化裝備資訊
+    
         formatted_equipment = []
         for equipment in equipped_equipment:
             if equipment[2] == 1:
@@ -2604,7 +2601,7 @@ async def equipment(ctx):
             else:
                 formatted_equipment.append(f"{equipment[1]}: {equipment[0]}")
 
-        # 發送裝備資訊
+
         embed = discord.Embed(title="您的裝備：", color=0x00ff9d)
         embed.add_field(name="裝備欄位", value="\n".join(formatted_equipment) or "無裝備", inline=False)
         embed.set_footer(text="我是ZU, 為您服務")
@@ -2617,10 +2614,13 @@ async def equipment(ctx):
         conn.close()
 
 
+
 #公會系統---------------------------------------------------------------------------------------------------------------------------------
         
 
-# 函數：獲取用戶所在公會的 ID
+
+
+
 def get_user_guild_id(user_id):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
@@ -2628,12 +2628,12 @@ def get_user_guild_id(user_id):
     result = cursor.fetchone()
     return result[0] if result else None
 
-# 函數：獲取用戶名稱
+
 def get_user_name(user_id):
     user = bot.get_user(user_id)
     return user.name if user else "未知用戶"
 
-# 指令：創建公會
+
 @bot.command()
 async def build_guild(ctx, Guild_Name: str):
     conn = sqlite3.connect(Database)
@@ -2641,7 +2641,7 @@ async def build_guild(ctx, Guild_Name: str):
     user_id = ctx.author.id
     required_money = 0
 
-    # 檢查公會名是否已存在
+
     cursor.execute("SELECT guild_id FROM guilds WHERE guild_name = ?", (Guild_Name,))
     existing_guild = cursor.fetchone()
 
@@ -2664,7 +2664,7 @@ async def build_guild(ctx, Guild_Name: str):
         cursor.execute("INSERT INTO guild_members (user_id, guild_id, position) VALUES (?, ?, ?)", (user_id, guild_id, "公會長"))
         conn.commit()
 
-        # 更新 player_info 表格
+      
         cursor.execute("UPDATE player_info SET guild_id = ?, position = ? WHERE user_id = ?", (guild_id, "公會長", user_id))
         conn.commit()
 
@@ -2674,7 +2674,9 @@ async def build_guild(ctx, Guild_Name: str):
         conn.close()
         await ctx.send("您的金錢不足，無法創建公會。")
 
-# 指令：查詢公會
+
+
+
 @bot.command()
 async def search_guilds(ctx):
     conn = sqlite3.connect(Database)
@@ -2689,7 +2691,8 @@ async def search_guilds(ctx):
     else:
         await ctx.send("目前還沒有任何公會。")
 
-# 指令：加入公會
+
+
 @bot.command()
 async def join_guild(ctx, guild_name: str):
     try:
@@ -2697,7 +2700,7 @@ async def join_guild(ctx, guild_name: str):
         cursor = conn.cursor()
         user_id = ctx.author.id
 
-        # 檢查用戶是否已經加入其他公會
+        
         cursor.execute("SELECT guild_id FROM guild_members WHERE user_id = ?", (user_id,))
         existing_guild = cursor.fetchone()
 
@@ -2705,7 +2708,7 @@ async def join_guild(ctx, guild_name: str):
             await ctx.send("您已經加入了一個公會，無法加入新的公會。")
             return
 
-        # 檢查公會是否存在
+      
         cursor.execute("SELECT guild_id, approval_required, minimum_level FROM guilds WHERE guild_name = ?", (guild_name,))
         guild_info = cursor.fetchone()
 
@@ -2715,14 +2718,13 @@ async def join_guild(ctx, guild_name: str):
 
         guild_id, approval_required, minimum_level = guild_info
 
-        # 如果公會需要審核
+      
         if approval_required:
             await ctx.send("您已提交加入申請，請等待公會審核。")
-            # 將申請信息存入數據庫，包括 user_id, guild_id 等
+
             cursor.execute("INSERT INTO guild_applications (user_id, guild_id) VALUES (?, ?)", (user_id, guild_id))
             conn.commit()
         else:
-            # 如果公會需要最低等級，檢查用戶等級是否符合
             if minimum_level:
                 cursor.execute("SELECT level FROM user_info WHERE user_id = ?", (user_id,))
                 user_level = cursor.fetchone()[0]
@@ -2731,7 +2733,7 @@ async def join_guild(ctx, guild_name: str):
                     await ctx.send(f"您的等級不足 {minimum_level} 級，無法加入該公會。")
                     return
 
-            # 將用戶加入公會
+
             cursor.execute("INSERT INTO guild_members (user_id, guild_id, position) VALUES (?, ?, ?)", (user_id, guild_id, "成員"))
             conn.commit()
             await ctx.send(f"您成功加入了 {guild_name} 公會！")
@@ -2743,7 +2745,8 @@ async def join_guild(ctx, guild_name: str):
     finally:
         conn.close()
 
-# 指令：查看公會信息
+
+
 @bot.command()
 async def guild(ctx):
     conn = sqlite3.connect(Database)
@@ -2769,7 +2772,7 @@ async def guild_members(ctx):
         conn = sqlite3.connect(Database)
         cursor = conn.cursor()
 
-        # 獲取用戶所在的公會信息
+
         user_id = ctx.author.id
         cursor.execute("SELECT guild_id FROM guild_members WHERE user_id = ?", (user_id,))
         guild_info = cursor.fetchone()
@@ -2777,7 +2780,7 @@ async def guild_members(ctx):
         if guild_info:
             guild_id = guild_info[0]
 
-            # 獲取公會名稱
+
             cursor.execute("SELECT guild_name FROM guilds WHERE guild_id = ?", (guild_id,))
             guild_name = cursor.fetchone()[0]
 
