@@ -3777,9 +3777,9 @@ async def creat(ctx):
 @bot.command(name='delete')
 async def delete_records(ctx, player: discord.User, table):
     if ctx.message.author.guild_permissions.administrator:
-        allowed_tables = ["player_info", "auction", "bag", "equipment", "farmers", "guild_members", "guild_applications", "guilds", "items", "map", "monster_info", "quests", "stock_market"]  # 添加其他允许的表名
+        allowed_tables = ["playe無效的表名r_info", "auction", "bag", "equipment", "farmers", "guild_members", "guild_applications", "guilds", "items", "map", "monster_info", "quests", "stock_market"]  # 添加其他允许的表名
         if table not in allowed_tables:
-            await ctx.send("无效的表名。")
+            await ctx.send("無效的表名。")
             return
 
         with sqlite3.connect(Database) as conn:
@@ -3801,9 +3801,9 @@ async def delete_records(ctx, player: discord.User, table):
                 cursor.execute(f"DELETE FROM {table} WHERE player_id = ?", (player.id,))
                 conn.commit()
 
-        await ctx.send(f"{table} 中的 {player.display_name} 的所有记录已被删除。")
+        await ctx.send(f"{table} 中的 {player.display_name} 的所有記錄已被刪除。")
     else:
-        await ctx.send("您没有执行此操作所需的权限。")
+        await ctx.send("您沒有執行此操作所需的權限。")
 
 @bot.command()
 async def delete_all_items(ctx):
@@ -3813,22 +3813,22 @@ async def delete_all_items(ctx):
             cursor.execute("DELETE FROM items")
             conn.commit()
 
-        await ctx.send("所有物品已成功删除。")
+        await ctx.send("所有物品已成功刪除。")
     else:
-        await ctx.send("您没有执行此操作所需的权限。")
+        await ctx.send("您沒有執行此操作所需的權限。")
 @bot.command()
 async def change_seller(ctx):
-    # 检查是否为管理员
+
     if ctx.message.author.guild_permissions.administrator:
-        # 使用 UPDATE 语句更改所有记录的 seller_id
+      
         with sqlite3.connect(Database) as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE items SET seller_id = '露娜'")
             conn.commit()
 
-        await ctx.send("所有物品的卖家已成功更改为“露娜”。")
+        await ctx.send("所有物品的賣家已成功更改為“露娜”。")
     else:
-        await ctx.send("您没有执行此操作所需的权限。")
+        await ctx.send("您沒有執行此操作所需的權限。")
 
 
 
