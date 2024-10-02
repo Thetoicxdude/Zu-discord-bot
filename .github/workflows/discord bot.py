@@ -21,14 +21,17 @@ import logging
 import random
 
 #====================================================
-
+# Define intents
 intents = discord.Intents.all()
 bot = commands.Bot(intents=intents, command_prefix='!')
 
 
+
+# 配置 logger
 logging.basicConfig(filename='app.log', level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+# 創建 logger 實例
 logger = logging.getLogger(__name__) 
 
 Database = "discord.db"
@@ -61,7 +64,8 @@ cursor.execute('''
         Mp INTEGER,
         Mp_cost INTEGER,
         owner_id INTEGER,
-        equipped BOOLEAN DEFAULT 0, -- 新增是否穿戴的欄位，預設為未穿戴
+        equipped BOOLEAN DEFAULT 0,
+        added BOOLEAN DEFAULT 0,
         FOREIGN KEY (owner_id) REFERENCES player_info(user_id)
     )
 ''')
@@ -74,6 +78,7 @@ cursor.execute('''
         quantity INTEGER ,
         rarity TEXT ,
         level INTEGER ,
+        main_job TEXT,
         attack INTEGER ,
         defense INTEGER ,
         Hp INTEGER ,
@@ -152,6 +157,7 @@ cursor.execute('''
     )
 ''')
 
+# Second table creation
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS guilds (
         guild_id INTEGER PRIMARY KEY,
@@ -162,6 +168,7 @@ cursor.execute('''
     )
 ''')
 
+# Third table creation
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS guild_members (
         user_id INTEGER,
@@ -173,6 +180,7 @@ cursor.execute('''
     )
 ''')
 
+# Fourth table creation
 cursor.execute('''
     CREATE TABLE IF NOT EXISTS guild_applications (
         application_id INTEGER PRIMARY KEY,
@@ -298,14 +306,14 @@ equipment_designs = {
 #=================================================================================================================
 
 
-
+# 配置 logger
 logging.basicConfig(filename='app.log', level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-
+# 創建 logger 實例
 logger = logging.getLogger(__name__) 
 
-
+# 创建连接池和数据库管理类
 class DatabasePool:
     def __init__(self):
         self.conn = sqlite3.connect(Database, timeout=180)  # 设置超时时间为10秒
@@ -815,8 +823,8 @@ async def bag(ctx):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
 
-    # 查詢裝備
-    cursor.execute("SELECT item_name, level, Rarity FROM equip_bag WHERE owner_id = ?", (author_id,))
+    # 查詢裝備，確保 added 為 0
+    cursor.execute("SELECT item_name, level, Rarity FROM equip_bag WHERE owner_id = ? AND added = 0", (author_id,))
     equip_items = cursor.fetchall()
 
     # 查詢背包材料、食物和藥水
@@ -861,12 +869,12 @@ async def equip_detail(ctx, item_name: str):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
 
-    # 查詢裝備詳細數值
-    cursor.execute("SELECT * FROM equip_bag WHERE owner_id = ? AND item_name = ?", (author_id, item_name))
+    # 查詢裝備詳細數值，確保 added 為 0
+    cursor.execute("SELECT * FROM equip_bag WHERE owner_id = ? AND item_name = ? AND added = 0", (author_id, item_name))
     equip_data = cursor.fetchall()
 
     if equip_data is None or len(equip_data) == 0:
-        await ctx.send("您的背包中沒有該裝備！")
+        await ctx.send("您的背包中沒有該裝備或該裝備已被上架！")
         conn.close()
         return
 
@@ -988,7 +996,15 @@ async def add(ctx, *, args: str):
     seller_id = str(ctx.author.id)
     arg_list = args.split()
 
-    # Check if the player is in a shop region
+    # 檢查參數長度
+    if len(arg_list) < 2:
+        embed = discord.Embed(color=0xFF0000)
+        embed.add_field(name="請輸入有效的參數。使用方法：!add <item> <price> 或 !add <item> <quantity> <price>", value="", inline=False)
+        embed.set_footer(text="我是ZU，為您服務")
+        await ctx.send(embed=embed)
+        return
+
+    # 檢查玩家是否在商店區域
     with sqlite3.connect(Database) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM map WHERE user_id = ?", (seller_id,))
@@ -1001,29 +1017,70 @@ async def add(ctx, *, args: str):
             await ctx.send(embed=embed)
             return
 
-        region_info = get_region(map_info[2], map_info[3], map_info[4])
+        region_info = str(get_region(map_info[2], map_info[3], map_info[4]))
         shop = ["新手商店"]
         if any(shop_name in region_info for shop_name in shop):
             item = arg_list[0]
-            cursor.execute("SELECT * FROM equip_bag WHERE owner_id = ? AND item_name = ?", (seller_id, item))
-            player_items = cursor.fetchall()
 
-            if player_items:
+
+            if len(arg_list) == 2:
+                # 處理裝備上架
+                try:
+                    price = int(arg_list[1])
+                except ValueError:
+                    embed = discord.Embed(color=0xFF0000)
+                    embed.add_field(name="請輸入有效的價格。", value="", inline=False)
+                    embed.set_footer(text="我是ZU，為您服務")
+                    await ctx.send(embed=embed)
+                    return
+
+                # 查詢未上架的裝備
+                cursor.execute("""
+                    SELECT equipment_id, item_type, rarity, level, attack, main_job, defense, Hp, Mp, Mp_cost
+                    FROM equip_bag
+                    WHERE owner_id = ? AND item_name = ? AND added = 0
+                """, (seller_id, item))
+                player_items = cursor.fetchall()
+
+                if not player_items:
+                    embed = discord.Embed(color=0xFF0000)
+                    embed.add_field(name="您沒有可上架的裝備，或這些裝備已經上架。", value="", inline=False)
+                    embed.set_footer(text="我是ZU，為您服務")
+                    await ctx.send(embed=embed)
+                    return
+
                 if len(player_items) > 1:
-                    # Create a selection menu with buttons for each item
+                    # 創建帶選擇菜單的視圖
                     select_menu = discord.ui.View()
                     select_options = []
+                    equipment_map = {}  # 用於存儲 equipment_id 與選項的對應
+
                     for player_item in player_items:
-                        item_type = player_item[2]
-                        rarity = player_item[3]
-                        level = player_item[4]
                         equipment_id = player_item[0]
+                        item_type = player_item[1]
+                        rarity = player_item[2]
+                        level = player_item[3]
+                        attack = player_item[4]
+                        main_job = player_item[5]
+                        defense = player_item[6]
+                        Hp = player_item[7]
+                        Mp = player_item[8]
+                        Mp_cost = player_item[9]
+
                         option_id = str(uuid.uuid4())
                         select_options.append(discord.SelectOption(
                             label=f"{item} (Type: {item_type}, Rarity: {rarity}, Level: {level})",
                             value=option_id,
                             description=f"Equipment ID: {equipment_id}"
                         ))
+                        equipment_map[option_id] = player_item
+
+                    if not select_options:
+                        embed = discord.Embed(color=0xFF0000)
+                        embed.add_field(name="沒有可上架的裝備。", value="", inline=False)
+                        embed.set_footer(text="我是ZU，為您服務")
+                        await ctx.send(embed=embed)
+                        return
 
                     select = discord.ui.Select(
                         placeholder="請選擇要上架的裝備",
@@ -1032,34 +1089,33 @@ async def add(ctx, *, args: str):
 
                     async def select_callback(interaction):
                         selected_id = select.values[0]
-                        for option in select.options:
-                            if option.value == selected_id:
-                                equipment_id = int(option.description.split(": ")[1])
-                                cursor.execute("SELECT item_type, rarity, level FROM equip_bag WHERE equipment_id = ? AND owner_id = ?", (equipment_id, seller_id,))
-                                result = cursor.fetchone()
-                                if result:
-                                    item_type, rarity, level = result
-                                else:
-                                    embed = discord.Embed(color=0xFF0000)
-                                    embed.add_field(name="找不到該裝備,可能已被出售或移除", value="", inline=False)
-                                    embed.set_footer(text="我是ZU，為您服務")
-                                    await interaction.response.send_message(embed=embed)
-                                    return
+                        selected_item = equipment_map.get(selected_id)
 
-                        if len(arg_list) < 2:
+                        if not selected_item:
                             embed = discord.Embed(color=0xFF0000)
-                            embed.add_field(name="請輸入有效的價格", value="", inline=False)
+                            embed.add_field(name="選擇的裝備無效或已被出售。", value="", inline=False)
                             embed.set_footer(text="我是ZU，為您服務")
                             await interaction.response.send_message(embed=embed)
                             return
 
-                        price = int(arg_list[1])
+                        equipment_id = selected_item[0]
+                        item_type = selected_item[1]
+                        rarity = selected_item[2]
+                        level = selected_item[3]
+                        attack = selected_item[4]
+                        main_job = selected_item[5]
+                        defense = selected_item[6]
+                        Hp = selected_item[7]
+                        Mp = selected_item[8]
+                        Mp_cost = selected_item[9]
 
-                        # Check if player has enough money to pay tax
+                        # 計算稅金
+                        tax_rate = 0.05  # 5% 稅率
+                        tax_amount = int(price * tax_rate)
+
+                        # 檢查玩家金錢是否足夠支付稅金
                         cursor.execute("SELECT money FROM player_info WHERE user_id = ?", (seller_id,))
                         player_money = cursor.fetchone()[0]
-                        tax_rate = 0.05  # 5% tax rate
-                        tax_amount = int(price * tax_rate)
 
                         if player_money < tax_amount:
                             embed = discord.Embed(color=0xFF0000)
@@ -1068,53 +1124,61 @@ async def add(ctx, *, args: str):
                             await interaction.response.send_message(embed=embed)
                             return
 
-                        # 在这里添加一个额外的检查,确保获取到了有效的 item_type、rarity 和 level
-                        if result is None:
-                            embed = discord.Embed(color=0xFF0000)
-                            embed.add_field(name="無法獲取裝備信息,請稍後再試", value="", inline=False)
-                            embed.set_footer(text="我是ZU，為您服務")
-                            await interaction.response.send_message(embed=embed)
-                            return
 
-                        cursor.execute("INSERT INTO items (seller_id, item_name, item_type, rarity, level, price, shop, player_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (seller_id, item, item_type, rarity, level, price, region_info, equipment_id))
+                        cursor.execute("UPDATE equip_bag SET added = 1 WHERE equipment_id = ?", (equipment_id,))
 
-                        # Update the player's money and commit the transaction
+
+                        # 插入到 items 表中
+                        cursor.execute("""
+                            INSERT INTO items (
+                                seller_id, item_name, item_type, rarity, level,
+                                attack, main_job, defense, Hp, Mp, Mp_cost,
+                                price, shop, player_id
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            seller_id, item, item_type, rarity, level,
+                            attack, main_job, defense, Hp, Mp, Mp_cost,
+                            price, region_info, equipment_id
+                        ))
+
+                        # 更新玩家金錢
                         cursor.execute("UPDATE player_info SET money = money - ? WHERE user_id = ?", (tax_amount, seller_id))
                         conn.commit()
 
-                        #將裝備刪除
-                        cursor.execute("DELETE FROM equip_bag WHERE equipment_id = ?", (equipment_id,))
-                        conn.commit()
-
                         embed = discord.Embed(color=0x00ff9d)
-                        embed.add_field(name=f"已將 {item} 上架，價格為 {price} 在 {region_info}", value=f"將收取 5% 的手續費，金額為 {tax_amount}", inline=False)
+                        embed.add_field(
+                            name=f"已將 {item} 上架，價格為 {price} 在 {region_info}",
+                            value=f"將收取 5% 的手續費，金額為 {tax_amount}",
+                            inline=False
+                        )
                         embed.set_footer(text="我是ZU，為您服務")
                         await interaction.response.send_message(embed=embed)
 
                     select.callback = select_callback
                     select_menu.add_item(select)
-                    await ctx.send("您有多個相同的裝備,請選擇要上架的裝備:", view=select_menu)
+                    await ctx.send("您有多個相同的裝備，請選擇要上架的裝備:", view=select_menu)
                 else:
+                    # 只有一個裝備
                     player_item = player_items[0]
-                    item_type = player_item[2]
-                    rarity = player_item[3]
-                    level = player_item[4]
                     equipment_id = player_item[0]
+                    item_type = player_item[1]
+                    rarity = player_item[2]
+                    level = player_item[3]
+                    attack = player_item[4]
+                    main_job = player_item[5]
+                    defense = player_item[6]
+                    Hp = player_item[7]
+                    Mp = player_item[8]
+                    Mp_cost = player_item[9]
+                    # add_flag 已經在查詢中排除了 added=1 的物品
 
-                    if len(arg_list) < 2:
-                        embed = discord.Embed(color=0xFF0000)
-                        embed.add_field(name="請輸入有效的價格", value="", inline=False)
-                        embed.set_footer(text="我是ZU，為您服務")
-                        await ctx.send(embed=embed)
-                        return
+                    # 計算稅金
+                    tax_rate = 0.05  # 5% 稅率
+                    tax_amount = int(price * tax_rate)
 
-                    price = int(arg_list[1])
-
-                    # Check if player has enough money to pay tax
+                    # 檢查玩家金錢是否足夠支付稅金
                     cursor.execute("SELECT money FROM player_info WHERE user_id = ?", (seller_id,))
                     player_money = cursor.fetchone()[0]
-                    tax_rate = 0.05  # 5% tax rate
-                    tax_amount = int(price * tax_rate)
 
                     if player_money < tax_amount:
                         embed = discord.Embed(color=0xFF0000)
@@ -1123,44 +1187,59 @@ async def add(ctx, *, args: str):
                         await ctx.send(embed=embed)
                         return
 
-                    cursor.execute("INSERT INTO items (seller_id, item_name, item_type, rarity, level, price, shop, player_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (seller_id, item, item_type, rarity, level, price, region_info, player_item))
 
-                    # Update the player's money and commit the transaction
+                    cursor.execute("UPDATE equip_bag SET added = 1 WHERE equipment_id = ?", (equipment_id,))
+
+
+                    # 插入到 items 表中
+                    cursor.execute("""
+                        INSERT INTO items (
+                            seller_id, item_name, item_type, rarity, level,
+                            attack, main_job, defense, Hp, Mp, Mp_cost,
+                            price, shop, player_id
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        seller_id, item, item_type, rarity, level,
+                        attack, main_job, defense, Hp, Mp, Mp_cost,
+                        price, region_info, equipment_id
+                    ))
+
+                    # 更新玩家金錢
                     cursor.execute("UPDATE player_info SET money = money - ? WHERE user_id = ?", (tax_amount, seller_id))
                     conn.commit()
 
-                    #將裝備刪除
-                    cursor.execute("DELETE FROM equip_bag WHERE  item_name = ?", (item,))
-                    conn.commit()
                     embed = discord.Embed(color=0x00ff9d)
-                    embed.add_field(name=f"已將 {item} 上架，價格為 {price} 在 {region_info}", value=f"將收取 5% 的手續費，金額為 {tax_amount}", inline=False)
+                    embed.add_field(
+                        name=f"已將 {item} 上架，價格為 {price} 在 {region_info}",
+                        value=f"將收取 5% 的手續費，金額為 {tax_amount}",
+                        inline=False
+                    )
                     embed.set_footer(text="我是ZU，為您服務")
                     await ctx.send(embed=embed)
-            else:
-                if len(arg_list) < 2:
+            elif len(arg_list) == 3:
+                # 處理普通物品上架
+                try:
+                    quantity = int(arg_list[1])
+                    price = int(arg_list[2])
+                except ValueError:
                     embed = discord.Embed(color=0xFF0000)
-                    embed.add_field(name="請輸入有效的數量和價格", value="", inline=False)
+                    embed.add_field(name="請輸入有效的數量和價格。", value="", inline=False)
                     embed.set_footer(text="我是ZU，為您服務")
                     await ctx.send(embed=embed)
                     return
 
-                item = arg_list[0]
-                price = int(arg_list[2])
-                quantity = int(arg_list[1])
-
-                # Check if quantity and price are valid
-                if price <= 0:
+                if price <= 0 or quantity <= 0:
                     embed = discord.Embed(color=0xFF0000)
-                    embed.add_field(name="請輸入有效的價格", value="", inline=False)
+                    embed.add_field(name="數量和價格必須大於 0。", value="", inline=False)
                     embed.set_footer(text="我是ZU，為您服務")
                     await ctx.send(embed=embed)
                     return
 
-                # Check if player has enough money to pay tax
+                # 檢查玩家金錢是否足夠支付稅金
+                tax_rate = 0.05  # 5% 稅率
+                tax_amount = int(price * tax_rate)
                 cursor.execute("SELECT money FROM player_info WHERE user_id = ?", (seller_id,))
                 player_money = cursor.fetchone()[0]
-                tax_rate = 0.05  # 5% tax rate
-                tax_amount = int(price * tax_rate)
 
                 if player_money < tax_amount:
                     embed = discord.Embed(color=0xFF0000)
@@ -1168,28 +1247,64 @@ async def add(ctx, *, args: str):
                     embed.set_footer(text="我是ZU，為您服務")
                     await ctx.send(embed=embed)
                     return
-                cursor.execute("SELECT * FROM bag WHERE owner_id = ? AND item_name = ?", (seller_id, item))
-                player_items = cursor.fetchall()
-                item_type = player_items[0][2]
-                cursor.execute("INSERT INTO items (seller_id, item_name, item_type, quantity, price, shop, player_id) VALUES (?, ?, ?, ?, ?, ?, ?)", (seller_id, item, item_type, quantity, price, region_info, seller_id))
 
-                # Update the player's money and commit the transaction
+                # 查詢背包中的物品
+                cursor.execute("""
+                    SELECT equipment_id, item_type, quantity
+                    FROM bag
+                    WHERE owner_id = ? AND item_name = ?
+                """, (seller_id, item))
+                player_items = cursor.fetchall()
+
+                if not player_items:
+                    embed = discord.Embed(color=0xFF0000)
+                    embed.add_field(name="背包中沒有該物品。", value="", inline=False)
+                    embed.set_footer(text="我是ZU，為您服務")
+                    await ctx.send(embed=embed)
+                    return
+
+                # 假設背包中同一物品只有一條記錄
+                bag_item = player_items[0]
+                equipment_id = bag_item[0]  # 如果 bag 表有 equipment_id，否則刪除此行
+                item_type = bag_item[1]
+                bag_quantity = bag_item[2]
+
+                if quantity > bag_quantity:
+                    quantity = bag_quantity  # 僅上架背包中的所有物品
+
+                # 插入到 items 表中
+                cursor.execute("""
+                    INSERT INTO items (
+                        seller_id, item_name, item_type, quantity, price, shop, player_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    seller_id, item, item_type, quantity, price, region_info, seller_id
+                ))
+
+                # 更新玩家金錢
                 cursor.execute("UPDATE player_info SET money = money - ? WHERE user_id = ?", (tax_amount, seller_id))
+
+                # 更新背包中的物品數量
+                if quantity < bag_quantity:
+                    cursor.execute("""
+                        UPDATE bag
+                        SET quantity = quantity - ?
+                        WHERE owner_id = ? AND item_name = ?
+                    """, (quantity, seller_id, item))
+                else:
+                    cursor.execute("""
+                        DELETE FROM bag
+                        WHERE owner_id = ? AND item_name = ?
+                    """, (seller_id, item))
+
                 conn.commit()
 
-                # 將上架物品數量減上架數量如果數量等於背包內該物品數量則刪除
-                cursor.execute("SELECT quantity FROM bag WHERE owner_id = ? AND item_name = ?", (seller_id, item))
-                bag_quantity = cursor.fetchone()
-                if bag_quantity:
-                    bag_quantity = bag_quantity[0]
-                    if quantity <= bag_quantity:
-                        cursor.execute("UPDATE bag SET quantity = quantity - ? WHERE owner_id = ? AND item_name = ?", (quantity, seller_id, item))
-                    else:
-                        quantity = bag_quantity
-                        cursor.execute("UPDATE bag SET quantity = 0 WHERE owner_id = ? AND item_name = ?", (seller_id, item))
-
                 embed = discord.Embed(color=0x00ff9d)
-                embed.add_field(name=f"已將 {item} * {quantity} 上架，價格為 {price} 在 {region_info}", value=f"將收取 5% 的手續費，金額為 {tax_amount}", inline=False)
+                embed.add_field(
+                    name=f"已將 {item} * {quantity} 上架，價格為 {price} 在 {region_info}",
+                    value=f"將收取 5% 的手續費，金額為 {tax_amount}",
+                    inline=False
+                )
                 embed.set_footer(text="我是ZU，為您服務")
                 await ctx.send(embed=embed)
         else:
@@ -1197,7 +1312,6 @@ async def add(ctx, *, args: str):
             embed.add_field(name=f"您不在商店區域內，無法上架物品", value="", inline=False)
             embed.set_footer(text="我是ZU，為您服務")
             await ctx.send(embed=embed)
-
 #============================================================================================================================
 
 @bot.command()
@@ -1239,7 +1353,6 @@ async def remove(ctx, *, args: str):
                 await ctx.send(embed=embed)
                 return
 
-            # 如果有多個相同名稱的武器,讓玩家選擇要下架的武器
             if len(item_infos) > 1:
                 select_menu = discord.ui.View()
                 select_options = []
@@ -1247,7 +1360,7 @@ async def remove(ctx, *, args: str):
                     item_type = item_info[10]
                     item_rarity = item_info[3]
                     item_level = item_info[4]
-                    item_id = item_info[13]
+                    item_id = item_info[14]
                     option_id = str(uuid.uuid4())
                     select_options.append(discord.SelectOption(
                         label=f"{item_name} (Type: {item_type}, Rarity: {item_rarity}, Level: {item_level})",
@@ -1270,7 +1383,7 @@ async def remove(ctx, *, args: str):
                             normal = ["材料", "藥水", "食物"]
                             if item_type in normal:
                                 # 普通物品直接移除
-                                cursor.execute("DELETE FROM items WHERE  item_name = ?", (item_name,))
+                                cursor.execute("DELETE FROM items WHERE item_name = ?", (item_name,))
                                 conn.commit()
 
                                 embed = discord.Embed(color=0x00ff9d)
@@ -1278,10 +1391,8 @@ async def remove(ctx, *, args: str):
                                 embed.set_footer(text="我是ZU，為您服務")
                                 await interaction.response.send_message(embed=embed)
                             else:
-                                # 裝備類物品需要將其返回到玩家的裝備袋
-                                item_rarity = item_info[3]
-                                item_level = item_info[4]
-                                cursor.execute("INSERT INTO equip_bag (owner_id, item_name, item_type, rarity, level) VALUES (?, ?, ?, ?, ?)", (seller_id, item_name, item_type, item_rarity, item_level))
+                                # 裝備類物品設定 added = 0 並返回到玩家的裝備袋
+                                cursor.execute("UPDATE equip_bag SET added = 0 WHERE owner_id = ? AND item_name = ?", (seller_id, item_name))
                                 cursor.execute("DELETE FROM items WHERE player_id = ?", (item_id,))
                                 conn.commit()
 
@@ -1307,9 +1418,8 @@ async def remove(ctx, *, args: str):
                         bag_quantity = bag_quantity[0]
                         cursor.execute("UPDATE bag SET quantity = quantity + ? WHERE owner_id = ? AND item_name = ?", (quantity, seller_id, item_name))
                     else:
-                        cursor.execute("INSERT INTO bag (owner_id, item_name, item_type, quantity) VALUES (?, ?, ?, ?)", (seller_id, item_name, item_type,quantity))
+                        cursor.execute("INSERT INTO bag (owner_id, item_name, item_type, quantity) VALUES (?, ?, ?, ?)", (seller_id, item_name, item_type, quantity))
 
-                    # 普通物品直接移除
                     cursor.execute("DELETE FROM items WHERE item_name = ?", (item_name,))
                     conn.commit()
 
@@ -1318,11 +1428,9 @@ async def remove(ctx, *, args: str):
                     embed.set_footer(text="我是ZU，為您服務")
                     await ctx.send(embed=embed)
                 else:
-                    # 裝備類物品需要將其返回到玩家的裝備袋
-                    item_rarity = item_info[3]
-                    item_level = item_info[4]
-                    cursor.execute("INSERT INTO equip_bag (owner_id, item_name, item_type, rarity, level) VALUES (?, ?, ?, ?, ?)", (seller_id, item_name, item_type, item_rarity, item_level))
-                    cursor.execute("DELETE FROM items WHERE id = ?", (item_id,))
+                    # 裝備類物品設定 added = 0 並返回到玩家的裝備袋
+                    cursor.execute("UPDATE equip_bag SET added = 0 WHERE owner_id = ? AND item_name = ?", (seller_id, item_name))
+                    cursor.execute("DELETE FROM items WHERE id = ?", (item_info[14],))
                     conn.commit()
 
                     embed = discord.Embed(color=0x00ff9d)
@@ -1424,95 +1532,279 @@ async def shop_search(ctx, seller_item: str = None):
 #買系統----------------------------------------------------------------------------------------------------------------------------------
 
 @bot.command()
-async def buy(ctx, seller: discord.User, item: str, quantity: int):
+async def buy(ctx, seller: discord.User, item: str, quantity: int = 1):
     buyer_id = str(ctx.author.id)
     seller_id = str(seller.id)
 
-    conn = sqlite3.connect(Database)
-    cursor = conn.cursor()
-
-    # 检查是否有玩家的注册信息
-    cursor.execute("SELECT * FROM player_info WHERE user_id = ?", (seller_id,))
-    player_info = cursor.fetchone()
-
-    if not player_info:
+    if buyer_id == seller_id:
         embed = discord.Embed(color=0xFF0000)
-        embed.add_field(name="請先使用 !register 進行註冊", value="", inline=False)
+        embed.add_field(name="您無法購買自己的物品。", value="", inline=False)
         embed.set_footer(text="我是ZU，為您服務")
         await ctx.send(embed=embed)
         return
 
-    # 查询玩家所在的地图信息
-    cursor.execute("SELECT * FROM map WHERE user_id = ?", (seller_id,))
-    map_info = cursor.fetchone()
-
-    if not map_info:
+    # 檢查參數有效性
+    if quantity < 1:
         embed = discord.Embed(color=0xFF0000)
-        embed.add_field(name="您尚未在地圖上設定位置！", value="", inline=False)
+        embed.add_field(name="數量必須大於 0。", value="", inline=False)
         embed.set_footer(text="我是ZU，為您服務")
         await ctx.send(embed=embed)
         return
 
-    # 获取玩家所在地图区域信息
-    region_info = get_region(map_info[2], map_info[3], map_info[4])
-    shop_names = ["新手商店"]  # 商店名称列表
+    with sqlite3.connect(Database) as conn:
+        cursor = conn.cursor()
 
-    # 检查玩家是否在商店区域
-    if any(shop_name in region_info for shop_name in shop_names):
-        # 检查是否有此物品的上架记录
+        # 檢查賣家是否已註冊
+        cursor.execute("SELECT * FROM player_info WHERE user_id = ?", (seller_id,))
+        seller_info = cursor.fetchone()
+        if not seller_info:
+            embed = discord.Embed(color=0xFF0000)
+            embed.add_field(name="賣家尚未註冊。", value="請賣家使用 `!register` 進行註冊。", inline=False)
+            embed.set_footer(text="我是ZU，為您服務")
+            await ctx.send(embed=embed)
+            return
 
-        cursor.execute("SELECT * FROM items WHERE seller_id = ? AND item_name = ? AND quantity >= ? AND shop = ?", (seller_id, item, quantity, region_info))
-        existing_item = cursor.fetchone()
-        if existing_item:
-            price = existing_item[3] * quantity
+        # 查詢賣家的地圖信息
+        cursor.execute("SELECT * FROM map WHERE user_id = ?", (seller_id,))
+        map_info = cursor.fetchone()
+        if not map_info:
+            embed = discord.Embed(color=0xFF0000)
+            embed.add_field(name="賣家尚未設置地圖位置。", value="", inline=False)
+            embed.set_footer(text="我是ZU，為您服務")
+            await ctx.send(embed=embed)
+            return
 
-            # 获取玩家的金钱数量
+        # 獲取地區信息
+        region_info = get_region(map_info[2], map_info[3], map_info[4])
+        shop_names = ["新手商店"]  # 商店名稱列表
+
+        # 檢查賣家是否在商店區域
+        if not any(shop_name in region_info for shop_name in shop_names):
+            embed = discord.Embed(color=0xFF0000)
+            embed.add_field(name="賣家不在商店區域內，無法購買物品。", value="", inline=False)
+            embed.set_footer(text="我是ZU，為您服務")
+            await ctx.send(embed=embed)
+            return
+
+        # 判斷是普通物品還是特殊物品
+        # 首先檢查是否為普通物品
+        cursor.execute("""
+            SELECT seller_id, item_name, item_type, quantity, price, shop, player_id
+            FROM items
+            WHERE seller_id = ? AND item_name = ? AND quantity >= ? AND shop = ?
+        """, (seller_id, item, quantity, region_info))
+        existing_normal_item = cursor.fetchone()
+
+        if existing_normal_item and existing_normal_item[2] not in ["武器", "裝備"]:
+            # 處理普通物品購買
+            _, _, item_type, available_quantity, unit_price, _, _ = existing_normal_item
+            total_price = unit_price * quantity
+
+            # 檢查買家的金錢
             cursor.execute("SELECT money FROM player_info WHERE user_id = ?", (buyer_id,))
-            player_money = cursor.fetchone()
-
-            if player_money[0] < price:
-                await ctx.send(f"錢不夠還差 {price - player_money[0]}")
+            buyer_money = cursor.fetchone()
+            if not buyer_money:
+                embed = discord.Embed(color=0xFF0000)
+                embed.add_field(name="買家尚未註冊。", value="請使用 `!register` 進行註冊。", inline=False)
+                embed.set_footer(text="我是ZU，為您服務")
+                await ctx.send(embed=embed)
                 return
 
-            # 向玩家确认购买操作
+            buyer_money = buyer_money[0]
+
+            if buyer_money < total_price:
+                embed = discord.Embed(color=0xFF0000)
+                embed.add_field(name="您的金錢不足以完成此次購買！", value=f"還差 {total_price - buyer_money} 元。", inline=False)
+                embed.set_footer(text="我是ZU，為您服務")
+                await ctx.send(embed=embed)
+                return
+
+            # 確認購買
             embed = discord.Embed(color=0x00ffbf)
-            embed.add_field(name=f"確定要購買 {seller.name} 的 {item} x{quantity} 嗎？", value=f"價格為 {price}", inline=False)
-            embed.add_field(name="請輸入 yes 確認購買，或輸入 no 取消。", value="", inline=True)
-            embed.set_footer(text="我是ZU, 為您服務")
+            embed.add_field(name=f"確定要購買 {seller.name} 的 {item} x{quantity} 嗎？", value=f"總價格為 {total_price} 元。", inline=False)
+            embed.add_field(name="請輸入 `yes` 確認購買，或輸入 `no` 取消。", value="", inline=True)
+            embed.set_footer(text="我是ZU，為您服務")
             await ctx.send(embed=embed)
 
             def check(msg):
                 return msg.author == ctx.author and msg.content.lower() in ['yes', 'no']
 
             try:
-                reply = await bot.wait_for('message', timeout=180.0, check=check)
+                reply = await bot.wait_for('message', timeout=30.0, check=check)
                 if reply.content.lower() == 'yes':
-                    # 更新数据库中的信息
-                    if quantity == existing_item[2]:
-                        cursor.execute("DELETE FROM items WHERE seller_id = ? AND item_name = ?", (seller_id, item))
+                    # 更新 items 表
+                    if quantity == available_quantity:
+                        cursor.execute("""
+                            DELETE FROM items
+                            WHERE seller_id = ? AND item_name = ? AND shop = ?
+                        """, (seller_id, item, region_info))
                     else:
-                        cursor.execute("UPDATE items SET quantity = quantity - ? WHERE seller_id = ? AND item_name = ?", (quantity, seller_id, item))
-                    cursor.execute("UPDATE player_info SET money = money + ? WHERE user_id = ?", (price, seller_id))
-                    cursor.execute("UPDATE player_info SET money = money - ? WHERE user_id = ?", (price, buyer_id))
-                    cursor.execute("SELECT item_name FROM bag WHERE owner_id = ? AND item_name = ?", (buyer_id, item))
-                    player_item = cursor.fetchone()
-                    if player_item:
-                        cursor.execute("UPDATE bag SET quantity = quantity + ? WHERE owner_id = ? AND item_name = ? ", (quantity, buyer_id, item))
-                    else:
-                        cursor.execute("INSERT INTO bag (quantity, owner_id, item_name, item_type, player_id) VALUES (?, ?, ?, ?, ?)", (quantity, buyer_id, item, existing_item[4], buyer_id))
-                    await ctx.send(f"您購買了 {seller.name} 的 {item} x{quantity}，花了 {price}！")
-                else:
-                    await ctx.send("交易取消。")
-            except asyncio.TimeoutError:
-                await ctx.send("交易確認逾時，交易取消。")
-            finally:
-                conn.commit()
-        else:
-            await ctx.send("架上沒有此物品")
-    else:
-        await ctx.send("您不在商店中，無法購買物品。")
+                        cursor.execute("""
+                            UPDATE items
+                            SET quantity = quantity - ?
+                            WHERE seller_id = ? AND item_name = ? AND shop = ?
+                        """, (quantity, seller_id, item, region_info))
 
-    conn.close()
+                    # 更新買家和賣家的金錢
+                    cursor.execute("""
+                        UPDATE player_info
+                        SET money = money + ?
+                        WHERE user_id = ?
+                    """, (total_price, seller_id))
+                    cursor.execute("""
+                        UPDATE player_info
+                        SET money = money - ?
+                        WHERE user_id = ?
+                    """, (total_price, buyer_id))
+
+                    # 更新買家的背包
+                    cursor.execute("""
+                        SELECT quantity FROM bag
+                        WHERE owner_id = ? AND item_name = ?
+                    """, (buyer_id, item))
+                    buyer_bag_item = cursor.fetchone()
+
+                    if buyer_bag_item:
+                        cursor.execute("""
+                            UPDATE bag
+                            SET quantity = quantity + ?
+                            WHERE owner_id = ? AND item_name = ?
+                        """, (quantity, buyer_id, item))
+                    else:
+                        # 插入新物品到背包
+                        cursor.execute("""
+                            INSERT INTO bag (quantity, owner_id, item_name, item_type, player_id)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (quantity, buyer_id, item, item_type, buyer_id))
+
+                    conn.commit()
+
+                    embed = discord.Embed(color=0x00ff9d)
+                    embed.add_field(
+                        name=f"成功購買 {item} x{quantity}",
+                        value=f"總價格為 {total_price} 元，已扣除您的金錢並轉給 {seller.name}。",
+                        inline=False
+                    )
+                    embed.set_footer(text="我是ZU，為您服務")
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("交易已取消。")
+            except asyncio.TimeoutError:
+                await ctx.send("交易確認逾時，交易已取消。")
+            return  # 結束命令，因為已處理為普通物品
+
+        # 如果不是普通物品，檢查是否為特殊物品（裝備）
+        cursor.execute("""
+            SELECT seller_id, item_name, item_type, rarity, level, attack, main_job, defense, Hp, Mp, Mp_cost, price, shop, player_id
+            FROM items
+            WHERE seller_id = ? AND item_name = ? AND shop = ?
+        """, (seller_id, item, region_info))
+        existing_special_item = cursor.fetchone()
+
+        if existing_special_item and existing_special_item[2] in ["武器", "裝備"]:
+            # 處理特殊物品購買
+            _, _, item_type, rarity, level, attack, main_job, defense, Hp, Mp, Mp_cost, unit_price, _, equipment_id = existing_special_item
+            total_price = unit_price  # 僅一個特殊物品的價格
+
+            # 特殊物品不接受 quantity 參數，強制設置為 1
+            quantity = 1
+
+            # 檢查買家的金錢
+            cursor.execute("SELECT money FROM player_info WHERE user_id = ?", (buyer_id,))
+            buyer_money = cursor.fetchone()
+            if not buyer_money:
+                embed = discord.Embed(color=0xFF0000)
+                embed.add_field(name="買家尚未註冊。", value="請使用 `!register` 進行註冊。", inline=False)
+                embed.set_footer(text="我是ZU，為您服務")
+                await ctx.send(embed=embed)
+                return
+
+            buyer_money = buyer_money[0]
+
+            if buyer_money < total_price:
+                embed = discord.Embed(color=0xFF0000)
+                embed.add_field(name="您的金錢不足以完成此次購買！", value=f"還差 {total_price - buyer_money} 元。", inline=False)
+                embed.set_footer(text="我是ZU，為您服務")
+                await ctx.send(embed=embed)
+                return
+
+            # 確認購買
+            embed = discord.Embed(color=0x00ffbf)
+            embed.add_field(name=f"確定要購買 {seller.name} 的 {item} 嗎？", value=f"價格為 {total_price} 元，類型為 {item_type}。", inline=False)
+            embed.add_field(name="請輸入 `yes` 確認購買，或輸入 `no` 取消。", value="", inline=True)
+            embed.set_footer(text="我是ZU，為您服務")
+            await ctx.send(embed=embed)
+
+            def check(msg):
+                return msg.author == ctx.author and msg.content.lower() in ['yes', 'no']
+
+            try:
+                reply = await bot.wait_for('message', timeout=30.0, check=check)
+                if reply.content.lower() == 'yes':
+                    # 更新 items 表（刪除該特殊物品）
+                    cursor.execute("""
+                        DELETE FROM items
+                        WHERE seller_id = ? AND item_name = ? AND shop = ?
+                    """, (seller_id, item, region_info))
+
+                    # 更新買家和賣家的金錢
+                    cursor.execute("""
+                        UPDATE player_info
+                        SET money = money + ?
+                        WHERE user_id = ?
+                    """, (total_price, seller_id))
+                    cursor.execute("""
+                        UPDATE player_info
+                        SET money = money - ?
+                        WHERE user_id = ?
+                    """, (total_price, buyer_id))
+
+                    # 更新買家的背包（特殊物品直接轉移到 equip_bag）
+                    cursor.execute("""
+                        SELECT * FROM equip_bag
+                        WHERE equipment_id = ?
+                    """, (equipment_id,))
+                    equip_item = cursor.fetchone()
+
+                    if equip_item:
+                        # 更新 equip_bag 的 owner_id 為買家，並設置 added 為 0
+                        cursor.execute("""
+                            UPDATE equip_bag
+                            SET owner_id = ?, added = 0
+                            WHERE equipment_id = ?
+                        """, (buyer_id, equipment_id))
+                    else:
+                        # 如果 equip_bag 中不存在該裝備，則創建一個新的記錄
+                        cursor.execute("""
+                            INSERT INTO equip_bag (owner_id, item_name, item_type, rarity, level, attack, main_job, defense, Hp, Mp, Mp_cost, added, player_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            buyer_id, item, item_type, rarity, level,
+                            attack, main_job, defense, Hp, Mp, Mp_cost, 0, buyer_id
+                        ))
+
+                    conn.commit()
+
+                    embed = discord.Embed(color=0x00ff9d)
+                    embed.add_field(
+                        name=f"成功購買 {item}",
+                        value=f"價格為 {total_price} 元，已扣除您的金錢並轉給 {seller.name}。",
+                        inline=False
+                    )
+                    embed.set_footer(text="我是ZU，為您服務")
+                    await ctx.send(embed=embed)
+                else:
+                    await ctx.send("交易已取消。")
+            except asyncio.TimeoutError:
+                await ctx.send("交易確認逾時，交易已取消。")
+            return  # 結束命令，因為已處理為特殊物品
+
+        # 如果既不是普通物品，也不是特殊物品
+        embed = discord.Embed(color=0xFF0000)
+        embed.add_field(name="該物品未被上架或不存在。", value="", inline=False)
+        embed.set_footer(text="我是ZU，為您服務")
+        await ctx.send(embed=embed)
+        
 #拍賣系統-----------------------------------------------------------------------------------------------------------------------------------------
         
 @bot.command()
@@ -2412,6 +2704,7 @@ async def brew(ctx, potion_name: str, quantity: int):
 @bot.command()
 async def eat(ctx, food_name: str, quantity: int):
     player_id = str(ctx.author.id)
+    conn = sqlite3.connect('your_database.db')  # 替换为实际的数据库文件名
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
     try:
@@ -2460,8 +2753,6 @@ async def eat(ctx, food_name: str, quantity: int):
 
 
 #=====================================================================================================================================
-
-
 
 # 裝備設計
 equipment_designs = {
@@ -2567,11 +2858,11 @@ async def unequip(ctx, *, equipment: str):
         conn.close()
         return
     
-   
+    # 更新玩家數值
     cursor.execute("UPDATE player_info SET attack = attack - ?, defense = defense - ?, max_HP = max_HP - ?, max_MP = max_MP - ? WHERE user_id = ?",
                    (equipment_data[5], equipment_data[7], equipment_data[8], equipment_data[9], user_id))
 
-    
+    # 將裝備放回背包
     cursor.execute("UPDATE equip_bag SET equipped = 0 WHERE owner_id = ? AND item_name = ?", (user_id, equipment))
     cursor.execute("UPDATE bag SET quantity = quantity + 1 WHERE owner_id = ? AND item_name = ?", (user_id, equipment))
 
@@ -2589,11 +2880,11 @@ async def equipment(ctx):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
     try:
-     
+        # 查詢玩家的裝備資料
         cursor.execute(f"SELECT item_name, item_type, equipped FROM equip_bag WHERE owner_id = ?", (user_id,))
         equipped_equipment = cursor.fetchall()
 
-    
+        # 格式化裝備資訊
         formatted_equipment = []
         for equipment in equipped_equipment:
             if equipment[2] == 1:
@@ -2601,7 +2892,7 @@ async def equipment(ctx):
             else:
                 formatted_equipment.append(f"{equipment[1]}: {equipment[0]}")
 
-
+        # 發送裝備資訊
         embed = discord.Embed(title="您的裝備：", color=0x00ff9d)
         embed.add_field(name="裝備欄位", value="\n".join(formatted_equipment) or "無裝備", inline=False)
         embed.set_footer(text="我是ZU, 為您服務")
@@ -2614,13 +2905,10 @@ async def equipment(ctx):
         conn.close()
 
 
-
 #公會系統---------------------------------------------------------------------------------------------------------------------------------
         
 
-
-
-
+# 函數：獲取用戶所在公會的 ID
 def get_user_guild_id(user_id):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
@@ -2628,12 +2916,12 @@ def get_user_guild_id(user_id):
     result = cursor.fetchone()
     return result[0] if result else None
 
-
+# 函數：獲取用戶名稱
 def get_user_name(user_id):
     user = bot.get_user(user_id)
     return user.name if user else "未知用戶"
 
-
+# 指令：創建公會
 @bot.command()
 async def build_guild(ctx, Guild_Name: str):
     conn = sqlite3.connect(Database)
@@ -2641,7 +2929,7 @@ async def build_guild(ctx, Guild_Name: str):
     user_id = ctx.author.id
     required_money = 0
 
-
+    # 檢查公會名是否已存在
     cursor.execute("SELECT guild_id FROM guilds WHERE guild_name = ?", (Guild_Name,))
     existing_guild = cursor.fetchone()
 
@@ -2664,7 +2952,7 @@ async def build_guild(ctx, Guild_Name: str):
         cursor.execute("INSERT INTO guild_members (user_id, guild_id, position) VALUES (?, ?, ?)", (user_id, guild_id, "公會長"))
         conn.commit()
 
-      
+        # 更新 player_info 表格
         cursor.execute("UPDATE player_info SET guild_id = ?, position = ? WHERE user_id = ?", (guild_id, "公會長", user_id))
         conn.commit()
 
@@ -2674,9 +2962,7 @@ async def build_guild(ctx, Guild_Name: str):
         conn.close()
         await ctx.send("您的金錢不足，無法創建公會。")
 
-
-
-
+# 指令：查詢公會
 @bot.command()
 async def search_guilds(ctx):
     conn = sqlite3.connect(Database)
@@ -2691,8 +2977,7 @@ async def search_guilds(ctx):
     else:
         await ctx.send("目前還沒有任何公會。")
 
-
-
+# 指令：加入公會
 @bot.command()
 async def join_guild(ctx, guild_name: str):
     try:
@@ -2700,7 +2985,7 @@ async def join_guild(ctx, guild_name: str):
         cursor = conn.cursor()
         user_id = ctx.author.id
 
-        
+        # 檢查用戶是否已經加入其他公會
         cursor.execute("SELECT guild_id FROM guild_members WHERE user_id = ?", (user_id,))
         existing_guild = cursor.fetchone()
 
@@ -2708,7 +2993,7 @@ async def join_guild(ctx, guild_name: str):
             await ctx.send("您已經加入了一個公會，無法加入新的公會。")
             return
 
-      
+        # 檢查公會是否存在
         cursor.execute("SELECT guild_id, approval_required, minimum_level FROM guilds WHERE guild_name = ?", (guild_name,))
         guild_info = cursor.fetchone()
 
@@ -2718,13 +3003,14 @@ async def join_guild(ctx, guild_name: str):
 
         guild_id, approval_required, minimum_level = guild_info
 
-      
+        # 如果公會需要審核
         if approval_required:
             await ctx.send("您已提交加入申請，請等待公會審核。")
-
+            # 將申請信息存入數據庫，包括 user_id, guild_id 等
             cursor.execute("INSERT INTO guild_applications (user_id, guild_id) VALUES (?, ?)", (user_id, guild_id))
             conn.commit()
         else:
+            # 如果公會需要最低等級，檢查用戶等級是否符合
             if minimum_level:
                 cursor.execute("SELECT level FROM user_info WHERE user_id = ?", (user_id,))
                 user_level = cursor.fetchone()[0]
@@ -2733,7 +3019,7 @@ async def join_guild(ctx, guild_name: str):
                     await ctx.send(f"您的等級不足 {minimum_level} 級，無法加入該公會。")
                     return
 
-
+            # 將用戶加入公會
             cursor.execute("INSERT INTO guild_members (user_id, guild_id, position) VALUES (?, ?, ?)", (user_id, guild_id, "成員"))
             conn.commit()
             await ctx.send(f"您成功加入了 {guild_name} 公會！")
@@ -2745,8 +3031,7 @@ async def join_guild(ctx, guild_name: str):
     finally:
         conn.close()
 
-
-
+# 指令：查看公會信息
 @bot.command()
 async def guild(ctx):
     conn = sqlite3.connect(Database)
@@ -2772,7 +3057,7 @@ async def guild_members(ctx):
         conn = sqlite3.connect(Database)
         cursor = conn.cursor()
 
-
+        # 獲取用戶所在的公會信息
         user_id = ctx.author.id
         cursor.execute("SELECT guild_id FROM guild_members WHERE user_id = ?", (user_id,))
         guild_info = cursor.fetchone()
@@ -2780,7 +3065,7 @@ async def guild_members(ctx):
         if guild_info:
             guild_id = guild_info[0]
 
-
+            # 獲取公會名稱
             cursor.execute("SELECT guild_name FROM guilds WHERE guild_id = ?", (guild_id,))
             guild_name = cursor.fetchone()[0]
 
@@ -3622,13 +3907,15 @@ async def daily_reminder():
 #-------------------------------------------------- 股市系統 ---------------------------------------------------------   
 
 # 股市系統 - 新增每天更新股市的任務
-@tasks.loop(hours=24)  
+@tasks.loop(hours=24)  # 每天執行一次
 async def update_stock_market():
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
 
+    # 獲取昨天的日期
     yesterday = datetime.date.today() - datetime.timedelta(days=1)
 
+    # 獲取所有昨天有交易的物品和商店
     cursor.execute("""
         SELECT DISTINCT item_name, shop
         FROM stock_market
@@ -3664,25 +3951,30 @@ async def update_stock_market():
         plt.ylabel("Price")
         plt.legend()
 
+        # 將圖片保存到 BytesIO 中
         image_stream = BytesIO()
         plt.savefig(image_stream, format='png')
         plt.close()
 
+        # 將 BytesIO 中的圖片發送到 Discord
         image_stream.seek(0)
 
-        channel_id = 1192518148361031791
+        # 取得頻道 ID，這裡假設有一個名為 'stock-market' 的頻道
+        channel_id = 1192518148361031791  # 替換為實際的頻道 ID
         channel = bot.get_channel(channel_id)
 
         if channel:
             await channel.send(file=discord.File(fp=image_stream, filename=f'{item}_{shop}_stock_market.png'))
 
+    # 计算昨天的交易总额
     cursor.execute("""
         SELECT SUM(price) 
         FROM transactions 
         WHERE transaction_date = ?
     """, (yesterday,))
-    total_transactions = cursor.fetchone()[0] 
+    total_transactions = cursor.fetchone()[0]  # 总交易额
 
+    # 将交易总额记录到数据库中
     cursor.execute("""
         INSERT INTO daily_transactions (date, total_transactions)
         VALUES (?, ?)
@@ -3695,6 +3987,8 @@ async def update_stock_market():
 async def before_update_stock_market():
     await bot.wait_until_ready()
 
+# 啟動每天早上9:00更新股市的任務
+# update_stock_market.start()
 
 @bot.command(name='update_stock_market')
 async def update_stock_market(ctx):
@@ -3752,23 +4046,29 @@ async def creat(ctx):
     conn = sqlite3.connect(Database)
     cursor = conn.cursor()
 
+    # 假设有一个名为 "item1" 的物品在 "shop1" 上有股市数据
     items = ["item1", "item2", "item3"]
     shops = ["shop1", "shop2", "shop3"]
 
+    # 创建一个日期范围（最近七天）
     date_range = [dt.date.today() - dt.timedelta(days=i) for i in range(7)]
 
+    # 手动插入股市数据
     for date in date_range:
         for item in items:
             for shop in shops:
                 week = date.strftime("%Y-%m-%d")
-                average_price = random.randint(50, 200) 
-                highest_price = average_price + random.randint(0, 50) 
-                lowest_price = max(0, average_price - random.randint(0, 50)) 
+                average_price = random.randint(50, 200)  # 平均价格
+                highest_price = average_price + random.randint(0, 50)  # 最高价格在平均价格上下波动
+                lowest_price = max(0, average_price - random.randint(0, 50))  # 最低价格在0和平均价格之间
+
+                # 插入数据到数据库中
                 cursor.execute("""
                     INSERT INTO stock_market (item_name, shop, date, week, average_price, highest_price, lowest_price)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (item, shop, date, week, average_price, highest_price, lowest_price))
 
+    # 提交更改并关闭数据库连接
     conn.commit()
     conn.close()
 
@@ -3776,12 +4076,15 @@ async def creat(ctx):
 #--------------------------------------------------------------------------------------------------------------------
 @bot.command(name='delete')
 async def delete_records(ctx, player: discord.User, table):
+    # 检查是否为管理员
     if ctx.message.author.guild_permissions.administrator:
-        allowed_tables = ["playe無效的表名r_info", "auction", "bag", "equipment", "farmers", "guild_members", "guild_applications", "guilds", "items", "map", "monster_info", "quests", "stock_market"]  # 添加其他允许的表名
+        # 验证表名是否合法
+        allowed_tables = ["player_info", "auction", "bag", "equipment", "farmers", "guild_members", "guild_applications", "guilds", "items", "map", "monster_info", "quests", "stock_market"]  # 添加其他允许的表名
         if table not in allowed_tables:
-            await ctx.send("無效的表名。")
+            await ctx.send("无效的表名。")
             return
 
+        # 使用 DELETE 语句删除指定表中指定用户的所有记录
         with sqlite3.connect(Database) as conn:
             cursor = conn.cursor()
             user_id_tables = ["guild_applications", "guild_members", "map", "player_info, "]
@@ -3801,34 +4104,36 @@ async def delete_records(ctx, player: discord.User, table):
                 cursor.execute(f"DELETE FROM {table} WHERE player_id = ?", (player.id,))
                 conn.commit()
 
-        await ctx.send(f"{table} 中的 {player.display_name} 的所有記錄已被刪除。")
+        await ctx.send(f"{table} 中的 {player.display_name} 的所有记录已被删除。")
     else:
-        await ctx.send("您沒有執行此操作所需的權限。")
+        await ctx.send("您没有执行此操作所需的权限。")
 
 @bot.command()
 async def delete_all_items(ctx):
+    # 检查是否为管理员
     if ctx.message.author.guild_permissions.administrator:
+        # 使用 DELETE 语句删除表中的所有记录
         with sqlite3.connect(Database) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM items")
             conn.commit()
 
-        await ctx.send("所有物品已成功刪除。")
+        await ctx.send("所有物品已成功删除。")
     else:
-        await ctx.send("您沒有執行此操作所需的權限。")
+        await ctx.send("您没有执行此操作所需的权限。")
 @bot.command()
 async def change_seller(ctx):
-
+    # 检查是否为管理员
     if ctx.message.author.guild_permissions.administrator:
-      
+        # 使用 UPDATE 语句更改所有记录的 seller_id
         with sqlite3.connect(Database) as conn:
             cursor = conn.cursor()
             cursor.execute("UPDATE items SET seller_id = '露娜'")
             conn.commit()
 
-        await ctx.send("所有物品的賣家已成功更改為“露娜”。")
+        await ctx.send("所有物品的卖家已成功更改为“露娜”。")
     else:
-        await ctx.send("您沒有執行此操作所需的權限。")
+        await ctx.send("您没有执行此操作所需的权限。")
 
 
 
