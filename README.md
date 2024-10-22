@@ -1,129 +1,169 @@
-Discord Bot Project
-  Table of Contents
-  Overview
-  Features
-  Prerequisites
-  Installation
-  Configuration
-  Database Setup
-  Usage
-  Command List
-  Logging
-  Error Handling
-  Customization
-  Contributing
-  License
-  Overview
-This project is a Python-based Discord bot designed to enhance your Discord server's experience with custom commands, tasks, and persistent storage using SQLite. The bot is capable of handling multiple server interactions and provides features such as logging, task scheduling, and data visualization.
+# Discord RPG遊戲機器人
 
-Features
-Command Handling: The bot processes user inputs with the ! command prefix.
-Database Support: Stores and retrieves data from an SQLite database (discord.db), making the bot stateful across restarts.
-Logging: Tracks events and activities in a structured log file (app.log).
-Task Scheduling: Schedules repeated tasks using the discord.ext.tasks extension.
-Data Visualization: Uses matplotlib to create charts and graphs, which can be displayed or sent within Discord.
-Concurrency: Manages asynchronous operations with asyncio for smooth interaction handling.
-Extensible: Can easily add new commands and features.
-Prerequisites
-Ensure you have the following installed before setting up the bot:
+這是一個基於Discord的多功能RPG遊戲機器人,提供了豐富的遊戲功能和系統。玩家可以在Discord中體驗完整的RPG遊戲流程,包括角色創建、冒險、戰鬥、社交等多個方面。
 
-Python 3.8+
-Pip (Python's package installer)
-Discord account with a registered bot token (see Discord Developer Portal)
-Installation
-Clone the repository:
-`git clone <repo-url>
-`
-Navigate to the project directory:
-`cd <project-directory>
-`
-Install dependencies: Install the required Python libraries by running:
-`pip install -r requirements.txt
-`
-Set up Discord Developer Application:
+## 主要功能
 
-Go to the Discord Developer Portal and create a new application.
-Generate your bot's token and add it to your environment.
-Configuration
-Before running the bot, you need to configure your Discord bot token:
+### 角色系統
+- 角色註冊與管理
+- 職業選擇(主職業和副職業)
+- 等級提升與屬性分配
+- 技能學習與使用
 
-Open main.py and locate the following line:
-`bot.run('YOUR_BOT_TOKEN')
-`
-Replace 'YOUR_BOT_TOKEN' with the actual token from the Discord Developer Portal.
-Alternatively, you can set the token as an environment variable:
+### 物品系統
+- 背包管理
+- 裝備穿戴與卸下
+- 物品使用(如藥水)
+- 物品合成
 
-`export DISCORD_BOT_TOKEN='your-bot-token'
-`
-Database Setup
-The bot uses SQLite for data persistence. The database (discord.db) is created automatically on the first run. If you need to customize the database structure:
+### 經濟系統
+- 商店購買與出售
+- 玩家間交易
+- 拍賣系統
+- 股市系統
 
-Modify the SQL queries in the main.py file.
-Run the bot to automatically initialize the new schema.
-Example database connection:
+### 地圖系統
+- 多區域地圖
+- 自由移動
+- 區域探索
+- 隨機事件
 
-`conn = sqlite3.connect('discord.db')
-cursor = conn.cursor()
-# Your custom SQL queries go here
-`
-Usage
-To start the bot, simply run:
+### 社交系統
+- 公會創建與管理
+- 公會任務
+- 玩家聊天室
 
-`python main.py
-`
-Once the bot is running, you can interact with it through your Discord server using commands prefixed with !.
+### 戰鬥系統
+- 回合制戰鬥
+- 技能使用
+- 怪物掉落
+- 經驗獲取
 
-Example Commands:
-!help: Shows a list of available commands.
-!ping: Responds with "Pong!" to check if the bot is responsive.
-Custom commands can be added by editing the main.py file.
-Command List
-Below are the default commands available:
+### 任務系統
+- 主線任務
+- 支線任務
+- 每日任務
+- 成就系統
 
-!ping: Basic command to check bot responsiveness.
-!time: Displays the current server time.
-!add <num1> <num2>: Adds two numbers and returns the result.
-!plot: Generates a sample plot using matplotlib and sends it in the chat.
-You can extend the bot's command list by adding new @bot.command() functions in main.py.
+### 其他系統
+- 農場與採集
+- 製作系統
+- 寵物系統(待實現)
 
-Logging
-All bot activities and errors are logged in the app.log file. You can modify the logging level by adjusting the logging.basicConfig() function:
+## 主要指令
 
-`logging.basicConfig(
-    filename='app.log',
-    level=logging.INFO,  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-`
-Error Handling
-The bot includes basic error handling. For instance, if a user enters an incorrect command or input, the bot will log the error and respond with a helpful message.
+### 角色相關
+- `!register` - 註冊新角色
+- `!player_info` - 查看角色信息
+- `!main_job <職業名>` - 選擇主職業
+- `!sub_job <職業名>` - 選擇副職業
+- `!level_up` - 升級並分配屬性點
 
-Example error handler:
+### 物品相關
+- `!bag` - 查看背包
+- `!equip <物品名>` - 裝備物品
+- `!unequip <物品名>` - 卸下裝備
+- `!use <物品名>` - 使用物品
 
-`@bot.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        await ctx.send("Sorry, I don't understand that command.")
-    else:
-        await ctx.send("An error occurred.")
-        logger.error(f"Error: {error}")
-`
-Customization
-To extend the bot’s functionality, you can:
+### 經濟相關
+- `!shop_list` - 查看商店物品列表
+- `!buy <物品名> <數量>` - 購買物品
+- `!sell <物品名> <數量>` - 出售物品
+- `!add <物品名> <數量> <價格>` - 上架物品到拍賣行
+- `!remove <物品名>` - 從拍賣行下架物品
 
-Add more commands by defining functions with @bot.command().
-Modify the database schema in the SQLite setup.
-Implement additional tasks using the @tasks.loop() decorator for periodic functions.
-Here’s an example of adding a new command:
+### 地圖相關
+- `!move <區域名> <x座標>,<y座標>` - 移動到指定位置
+- `!location` - 查看當前位置
 
-`@bot.command()
-async def greet(ctx):
-    await ctx.send("Hello! I'm your friendly bot.")
-`
-Contributing
-Contributions are welcome! Please submit issues or pull requests to suggest features, fix bugs, or improve the code.
+### 公會相關
+- `!build_guild <公會名>` - 創建公會
+- `!join_guild <公會名>` - 加入公會
+- `!guild` - 查看公會信息
+- `!guild_members` - 查看公會成員列表
 
-License
-This project is licensed under the MIT License. See LICENSE for details.
+### 戰鬥相關
+- 戰鬥系統自動觸發,無需特定指令
 
+### 任務相關
+- `!quests` - 查看當前任務列表
+
+### 其他
+- `!plant <作物名>` - 種植作物
+- `!harvest` - 收穫作物
+- `!craft <物品名>` - 製作物品
+
+## 技術實現
+
+- 使用 Discord.py 庫開發,實現與Discord API的交互
+- 採用SQLite數據庫存儲遊戲數據,包括玩家信息、物品、公會等
+- 使用異步編程處理用戶交互,提高響應速度
+- 模塊化設計各個遊戲系統,便於擴展和維護
+- 使用embed消息美化輸出,提升用戶體驗
+- 實現了基本的錯誤處理和日誌記錄
+
+## 安裝與運行
+
+1. 克隆項目:
+   ```
+   git clone https://github.com/yourusername/discord-rpg-bot.git
+   cd discord-rpg-bot
+   ```
+
+2. 安裝依賴:
+   ```
+   pip install -r requirements.txt
+   ```
+
+3. 設置 Discord Bot Token:
+   - 在Discord開發者平台創建一個新的應用並獲取Bot Token
+   - 將Token添加到配置文件或環境變量中
+
+4. 初始化數據庫:
+   ```
+   python init_db.py
+   ```
+
+5. 運行bot:
+   ```
+   python main.py
+   ```
+
+## 配置
+
+可以通過修改 `config.py` 文件來調整以下設置:
+- Discord Bot Token
+- 數據庫路徑
+- 遊戲平衡參數(如經驗值曲線、物品價格等)
+- 功能開關
+
+## 貢獻
+
+我們歡迎各種形式的貢獻,包括但不限於:
+- 報告bug
+- 提出新功能建議
+- 改進代碼
+- 優化遊戲平衡
+- 補充文檔
+
+請先查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解詳細的貢獻指南。
+
+## 待實現功能
+
+- [ ] 寵物系統
+- [ ] PVP競技場
+- [ ] 排行榜系統
+- [ ] 更多職業和技能
+- [ ] 副本系統
+
+## 授權
+
+本項目採用 MIT 授權協議。詳見 [LICENSE](LICENSE) 文件。
+
+## 聯繫方式
+
+如有任何問題或建議,請通過以下方式聯繫我們:
+- Discord: [加入我們的Discord服務器](https://discord.gg/yourserver)
+- Email: your.email@example.com
+- GitHub Issues: [提交Issue](https://github.com/yourusername/discord-rpg-bot/issues)
 
